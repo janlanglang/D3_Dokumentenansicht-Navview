@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"erpDashboardSync.dbFetchJsonUrl": "https://applusdeploy.systec-lab.local/APplusdeploy/flexmobility/customutils.asmx/dbFetchJSON",
+		"erpDashboardSync.xmlUpdateOfflineSoapUrl": "https://applusdeploy.systec-lab.local/APplusdeploy/flexmobility/utils.asmx",
+		"erpDashboardSync.authMode": "ntlm",
+		"erpDashboardSync.tlsAllowInsecure": true
+	}
+}
