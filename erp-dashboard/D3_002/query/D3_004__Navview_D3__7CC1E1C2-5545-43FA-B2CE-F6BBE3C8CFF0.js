@@ -426,7 +426,7 @@
 			this.root.innerHTML = `
 				<header class="d3-toolbar">
 					<h2>Dokumente <span class="d3-count"></span></h2>
-					<button type="button" class="d3-drop">Dateien ablegen oder auswaehlen</button>
+					<button type="button" class="d3-drop">Dateien ablegen oder auswählen</button>
 					<label class="d3-search-label"><span class="d3-sr">Dokumente suchen</span><input class="d3-search" type="search" placeholder="Suchen" /></label>
 					<button type="button" class="d3-icon d3-refresh" title="Aktualisieren" aria-label="Aktualisieren">&#8635;</button>
 					<button type="button" class="d3-action d3-add">&#43; Dateien</button>
@@ -437,7 +437,7 @@
 					<div class="d3-list" aria-label="Dokumentliste"></div>
 					<section class="d3-preview" aria-label="Dokumentvorschau">
 						<header class="d3-preview-head"><strong>Vorschau</strong><button class="d3-icon d3-download" type="button" title="Herunterladen" aria-label="Herunterladen" disabled>&#8595;</button></header>
-						<div class="d3-preview-content"><p class="d3-empty">Kein Dokument ausgewaehlt.</p></div>
+						<div class="d3-preview-content"><p class="d3-empty">Kein Dokument ausgewählt.</p></div>
 					</section>
 				</div>
 				<section class="d3-upload" hidden>
@@ -489,6 +489,12 @@
 				if (this.destroyed || !this.root.isConnected) return;
 				const top = this.root.getBoundingClientRect().top;
 				let bottom = root.innerHeight - 16;
+				const dashboardContent = this.container.closest('.dashboard-content[data-contenttype="table"]');
+				if (dashboardContent) {
+					const style = root.getComputedStyle(dashboardContent);
+					bottom = Math.min(bottom, dashboardContent.getBoundingClientRect().bottom -
+						(parseFloat(style.borderBottomWidth) || 0) - (parseFloat(style.paddingBottom) || 0));
+				}
 				let ancestor = this.root.parentElement;
 				while (ancestor && ancestor !== root.document.body) {
 					const style = root.getComputedStyle(ancestor);
@@ -512,6 +518,8 @@
 			if (root.ResizeObserver) {
 				this.resizeObserver = new root.ResizeObserver(this.resize);
 				this.resizeObserver.observe(this.root.parentElement);
+				const dashboardContent = this.container.closest('.dashboard-content[data-contenttype="table"]');
+				if (dashboardContent) this.resizeObserver.observe(dashboardContent);
 			}
 			this.observer = new root.MutationObserver(() => {
 				if (!this.root.isConnected || !this.container.isConnected) this.destroy();
@@ -549,14 +557,17 @@
 			this.clearPreview();
 			this.ui['preview-head'].querySelector('strong').textContent = 'Vorschau';
 			this.ui.download.disabled = true;
-			this.previewMessage('Kein Dokument ausgewaehlt.');
+			this.previewMessage('Kein Dokument ausgewählt.');
 			this.renderQueue();
 			return this.refresh(initialPayload);
 		}
 
-		notice(message, error) {
-			this.ui.notice.textContent = message;
+		notice(message, error, show) {
+			const textMessage = message ? String(message) : '';
+			const visible = show === undefined ? (!!textMessage && !!error) : (!!textMessage && !!show);
+			this.ui.notice.textContent = textMessage;
 			this.ui.notice.classList.toggle('d3-error', !!error);
+			this.root.classList.toggle('d3-notice-visible', visible);
 		}
 
 		async refresh(initialPayload) {
@@ -565,7 +576,7 @@
 			const context = this.context;
 			const active = () => !this.destroyed && generation === this.generation && loadNumber === this.loadNumber;
 			this.ui.refresh.disabled = true;
-			this.notice('Dokumente werden geladen ...');
+			this.notice('', false, false);
 			try {
 				const queryPromise = Promise.resolve().then(() => initialPayload || loadQueryPayload(context));
 				const results = await Promise.allSettled([
@@ -611,13 +622,13 @@
 				this.selected = previous ? documents.find((document) => document.url && document.url === previous.url && document.id === previous.id) || null : null;
 				if (previous && !this.selected) {
 					this.clearPreview();
-					this.previewMessage('Das ausgewaehlte Dokument ist nicht mehr in der Liste.');
+					this.previewMessage('Das ausgewählte Dokument ist nicht mehr in der Liste.');
 					this.ui.download.disabled = true;
 				}
 				this.renderList();
 				const problems = documents.filter((document) => document.metadataError || document.linkError).length;
 				this.notice(documents.length + ' Dokumente' + (problems ? ' | ' + problems + ' mit Integrationsfehlern.' : '') +
-					(typeError ? ' | Dokumentarten konnten nicht geladen werden: ' + typeError : ''), problems > 0 || !!typeError);
+						(typeError ? ' | Dokumentarten konnten nicht geladen werden: ' + typeError : ''), problems > 0 || !!typeError);
 			} catch (error) {
 				if (!active()) return;
 				this.documents = [];
@@ -875,7 +886,7 @@
 				};
 				field('Dateiname *', 'filename');
 				field('Beschreibung', 'description');
-				const typePlaceholder = this.typesFallback && this.types.length ? [] : [['', this.types.length ? 'Auswaehlen' : 'Keine Dokumentarten geladen']];
+				const typePlaceholder = this.typesFallback && this.types.length ? [] : [['', this.types.length ? 'Auswählen' : 'Keine Dokumentarten geladen']];
 				field('Dokumentart *', 'doctype', typePlaceholder.concat(this.types.map((type) => [type, type])));
 				field('Sprache', 'language', languages);
 				field('Revision', 'revision');
@@ -908,6 +919,7 @@
 		async upload() {
 			if (this.busy || !this.context || !this.types.length) return;
 			this.busy = true;
+			this.notice('Upload wird ausgefuehrt ...', false, true);
 			const generation = this.generation;
 			const context = Object.assign({}, this.context);
 			const active = () => !this.destroyed && generation === this.generation;
@@ -946,7 +958,7 @@
 							? await this.config.confirmUpload(body, response) : assessUpload(body));
 						if (confirmed !== true) {
 							item.status = 'uncertain';
-							item.error = 'Servererfolg nicht eindeutig bestaetigt. Archiv pruefen, bevor erneut gesendet wird.';
+							item.error = 'Servererfolg nicht eindeutig bestätigt. Archiv prüfen, bevor erneut gesendet wird.';
 							failures += 1;
 						} else {
 							successes += 1;
@@ -963,8 +975,10 @@
 				this.busy = false;
 				if (!this.destroyed) this.renderQueue();
 				if (active()) {
-					this.ui['upload-result'].textContent = successes + ' erfolgreich, ' + failures + ' zu pruefen';
+					const uploadSummary = successes + ' erfolgreich, ' + failures + ' zu pruefen';
+					this.ui['upload-result'].textContent = uploadSummary;
 					await this.refresh();
+					this.notice('Upload: ' + uploadSummary, failures > 0, true);
 				}
 			}
 		}
