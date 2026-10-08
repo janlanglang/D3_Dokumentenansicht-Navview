@@ -6,11 +6,22 @@
 	const instances = new WeakMap();
 	const parentLayouts = new WeakMap();
 	const textExtensions = new Set(['txt', 'csv', 'json', 'xml']);
+	const d3PdfPreviewExtensions = new Set(['msg', 'eml', 'email']);
 	const MAX_TEXT_PREVIEW_BYTES = 5 * 1024 * 1024;
+	const D3_LOGO_SERVER_PATH = '../style/wss/d3.png';
+	const D3_LOGO_DATA_URL = 'data:image/png;base64,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';
 	const languages = [['', 'Keine Angabe'], ['de', 'Deutsch'], ['en', 'English'], ['fr', 'Francais'], ['es', 'Espanol']];
 
 	function text(value) {
 		return value === null || value === undefined ? '' : String(value).trim();
+	}
+
+	function d3LogoDataUrl() {
+		// Reconstruct the exact user-supplied PNG after the chat transfer duplicated one Base64 segment.
+		const separator = D3_LOGO_DATA_URL.indexOf(',') + 1;
+		const encoded = D3_LOGO_DATA_URL.slice(separator);
+		const originalMiddle = 'pan7mSmPmQVnnO2znWWrqc4LyqLrkMFh280odAAAOyUlEQVR4nO3dfXuaOgPHcaEEomJpWqB2rgrUWvvkabfqse79v68bN7Zr25GEShKS6/59/t+EfgV5Suj1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB0KZLPXGnXCwhcw6trnhev6wUErmGf8Zygn9mGfdchdRwX/Qy371cP/UyH';
+		return D3_LOGO_DATA_URL.slice(0, separator) + encoded.slice(0, 263) + originalMiddle + encoded.slice(640);
 	}
 
 	function parseRows(value) {
@@ -242,6 +253,26 @@
 		} catch (error) { return ''; }
 	}
 
+	function d3CurrentVersionPageUrl(document) {
+		if (!document || !document.url || !/^[A-Za-z0-9_-]+$/.test(document.repository || '') || !/^[A-Za-z0-9_-]+$/.test(document.id || '')) return '';
+		try {
+			const source = new URL(document.url);
+			const match = source.pathname.match(/^\/dms\/r\/([^/]+)\/o2\/([^/]+)\//i);
+			if (!match || match[1] !== document.repository || match[2] !== document.id) return '';
+			source.pathname = '/dms/r/' + document.repository + '/o2/' + document.id + '/v/current/b/p1/c';
+			source.search = '';
+			source.hash = '';
+			return source.href;
+		} catch (error) { return ''; }
+	}
+
+	async function isPdfBlob(blob) {
+		if (!blob) return false;
+		if (/application\/pdf/i.test(blob.type || '')) return true;
+		const prefix = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+		return prefix.length === 5 && String.fromCharCode(prefix[0], prefix[1], prefix[2], prefix[3], prefix[4]) === '%PDF-';
+	}
+
 	function element(tag, className, content) {
 		const created = root.document.createElement(tag);
 		if (className) created.className = className;
@@ -311,34 +342,28 @@
 			const update = () => {
 				scheduled = 0;
 				if (disposed || !frame.isConnected || !frame.getClientRects().length) return;
-				const bottom = parentWindow.innerHeight - 16;
+				const bottom = Math.floor(parentWindow.innerHeight * 0.97);
 				const ancestors = [];
 				let ancestor = frame.parentElement;
 				while (ancestor && ancestor !== frame.ownerDocument.body && ancestor !== frame.ownerDocument.documentElement) {
 					const style = parentWindow.getComputedStyle(ancestor);
-					const rect = ancestor.getBoundingClientRect();
-					if (changes.has(ancestor) || (rect.bottom < bottom &&
-						(/(auto|scroll|hidden|clip)/.test(style.overflowY) || style.maxHeight !== 'none'))) ancestors.push(ancestor);
+					if (!style.display.startsWith('table')) ancestors.push(ancestor);
+					if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) break;
 					ancestor = ancestor.parentElement;
 				}
+				let contentBottom = bottom;
 				ancestors.reverse().forEach((target) => {
+					const style = parentWindow.getComputedStyle(target);
 					setStyle(target, 'box-sizing', 'border-box');
+					setStyle(target, 'min-height', '0px');
 					setStyle(target, 'max-height', 'none');
-					setStyle(target, 'height', Math.max(0, bottom - Math.max(0, target.getBoundingClientRect().top)) + 'px');
+					setStyle(target, 'height', Math.max(0, Math.floor(contentBottom - Math.max(0, target.getBoundingClientRect().top))) + 'px');
+					contentBottom -= (parseFloat(style.paddingBottom) || 0) + (parseFloat(style.borderBottomWidth) || 0);
 				});
-				let frameBottom = bottom;
-				ancestor = frame.parentElement;
-				while (ancestor && ancestor !== frame.ownerDocument.body && ancestor !== frame.ownerDocument.documentElement) {
-					const style = parentWindow.getComputedStyle(ancestor);
-					if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) {
-						frameBottom = Math.min(frameBottom, ancestor.getBoundingClientRect().bottom -
-							(parseFloat(style.paddingBottom) || 0) - (parseFloat(style.borderBottomWidth) || 0));
-					}
-					ancestor = ancestor.parentElement;
-				}
 				setStyle(frame, 'box-sizing', 'border-box');
+				setStyle(frame, 'min-height', '0px');
 				setStyle(frame, 'max-height', 'none');
-				setStyle(frame, 'height', Math.max(0, frameBottom - Math.max(0, frame.getBoundingClientRect().top)) + 'px');
+				setStyle(frame, 'height', Math.max(0, Math.floor(contentBottom - Math.max(0, frame.getBoundingClientRect().top))) + 'px');
 			};
 			const schedule = () => {
 				if (!disposed && !scheduled) scheduled = parentWindow.requestAnimationFrame(update);
@@ -647,7 +672,28 @@
 					const download = iconButton('\u2193', 'Herunterladen: ' + document.name);
 					download.disabled = !document.url;
 					download.addEventListener('click', () => this.download(document));
-					row.append(select, download);
+					const d3Url = d3PreviewUrl(document);
+					const d3Link = element(d3Url ? 'a' : 'span', 'd3-icon d3-element-link');
+					const d3Logo = element('img', 'd3-logo');
+					d3Logo.src = new URL(D3_LOGO_SERVER_PATH, root.location.href).href;
+					d3Logo.addEventListener('error', () => {
+						if (!d3Logo.dataset.fallback) {
+							d3Logo.dataset.fallback = 'base64';
+							d3Logo.src = d3LogoDataUrl();
+						}
+					});
+					d3Logo.alt = '';
+					d3Link.append(d3Logo);
+					d3Link.title = 'In D3 oeffnen: ' + document.name;
+					d3Link.setAttribute('aria-label', d3Link.title);
+					if (d3Url) {
+						d3Link.href = d3Url;
+						d3Link.target = '_blank';
+						d3Link.rel = 'noopener noreferrer';
+					} else {
+						d3Link.setAttribute('aria-disabled', 'true');
+					}
+					row.append(select, d3Link, download);
 					const details = element('dl', 'd3-metadata');
 					[['Beschreibung', document.description], ['Sprache', document.language], ['Revision', document.revision],
 						['Datum', document.date], ['Groesse', document.size === null ? null : formatSize(document.size)]].forEach(([label, value]) => {
@@ -710,18 +756,36 @@
 				}
 				return;
 			}
-			if (mime === 'application/octet-stream') {
+			if (mime === 'application/octet-stream' || d3PdfPreviewExtensions.has(document.extension)) {
+				const currentUrl = d3CurrentVersionPageUrl(document);
+				if (currentUrl) {
+					try {
+						const blob = await this.fetchBlob(Object.assign({}, document, { url: currentUrl, extension: 'pdf' }), this.previewAbort.signal);
+						if (this.destroyed || number !== this.previewNumber) return;
+						if (await isPdfBlob(blob)) {
+							this.previewObjectUrl = root.URL.createObjectURL(new root.Blob([blob], { type: 'application/pdf' }));
+							const preview = element('iframe', 'd3-preview-media');
+							preview.setAttribute('title', document.name);
+							preview.src = this.previewObjectUrl;
+							preview.addEventListener('error', () => {
+								if (number === this.previewNumber) this.previewMessage('PDF-Vorschau konnte nicht angezeigt werden.');
+							});
+							this.ui['preview-content'].replaceChildren(preview);
+							return;
+						}
+					} catch (error) {
+						if (error.name === 'AbortError') return;
+					}
+				}
 				const previewUrl = d3PreviewUrl(document);
 				if (!previewUrl) { this.previewMessage('Fuer dieses Dateiformat ist keine Vorschau verfuegbar.'); return; }
 				const wrapper = element('div', 'd3-dms-preview');
-				const preview = element('iframe', 'd3-preview-media');
-				preview.title = 'D3-Vorschau: ' + document.name;
-				preview.src = previewUrl;
-				const link = element('a', 'd3-preview-link', 'D3-Vorschau in neuem Fenster oeffnen');
+				const message = element('p', 'd3-empty', 'Keine direkte PDF-Vorschau verfuegbar. Bitte D3-Vorschau im neuen Fenster öffnen.');
+				const link = element('a', 'd3-preview-link', 'D3-Vorschau in neuem Fenster öffnen');
 				link.href = previewUrl;
 				link.target = '_blank';
 				link.rel = 'noopener noreferrer';
-				wrapper.append(preview, link);
+				wrapper.append(message, link);
 				this.ui['preview-content'].replaceChildren(wrapper);
 				return;
 			}
@@ -938,7 +1002,7 @@
 	}
 
 	if (typeof module === 'object' && module.exports) {
-		module.exports = { parseRows, toRecord, normalizeDocuments, enrichDocuments, formatSize, validateDraft, validateContext, assessUpload, parseQueryPayload, formatTextPreview, d3PreviewUrl };
+		module.exports = { parseRows, toRecord, normalizeDocuments, enrichDocuments, formatSize, validateDraft, validateContext, assessUpload, parseQueryPayload, formatTextPreview, d3PreviewUrl, d3CurrentVersionPageUrl };
 	} else if (!root.D3DocumentView) {
 		root.D3DocumentView = { mount: mount };
 		const pending = root.D3DocumentViewPending || [];

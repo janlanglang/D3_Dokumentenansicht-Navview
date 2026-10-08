@@ -120,8 +120,11 @@ test('text preview formats JSON and rejects invalid JSON/XML without interpretin
 test('D3 preview URL is derived only from a validated document identity', () => {
   const document = api.normalizeDocuments([doc('T000178304')], base)[0];
   assert.equal(api.d3PreviewUrl(document), 'https://d3.example/dms/r/repo/o2/T000178304/preview');
+  assert.equal(api.d3CurrentVersionPageUrl(document), 'https://d3.example/dms/r/repo/o2/T000178304/v/current/b/p1/c');
   assert.equal(api.d3PreviewUrl({ url: '', repository: 'repo', id: 'T1' }), '');
+  assert.equal(api.d3CurrentVersionPageUrl({ url: '', repository: 'repo', id: 'T1' }), '');
   assert.equal(api.d3PreviewUrl({ url: base + 'dms/r/repo/o2/T1/v/1_1/b/main/c', repository: 'repo', id: '../bad' }), '');
+  assert.equal(api.d3CurrentVersionPageUrl({ url: base + 'dms/r/repo/o2/T1/v/1_1/b/main/c', repository: 'repo', id: '../bad' }), '');
 });
 
 test('optional upload fields, native query context, sizes and context validation', () => {
@@ -144,7 +147,7 @@ test('mount is generic, SQL enrichment automatic, reload is idempotent and text 
   try {
     await fixture.mount();
     assert.equal(fixture.host.querySelectorAll('.d3-view').length, 1);
-    assert.equal(fixture.host.querySelector('.d3-list img'), null);
+    assert.equal(fixture.host.querySelector('.d3-filename img'), null);
     assert.match(fixture.host.querySelector('.d3-metadata').textContent, /Beschreibung T1/);
     assert.match(fixture.host.querySelector('.d3-metadata').textContent, /0 B/);
     assert.equal(fixture.queryCalls[0].name, 'D3_004');
@@ -273,7 +276,7 @@ test('no explicit ID and no version path leaves list usable without guessing an 
     await fixture.mount();
     assert.match(fixture.host.querySelector('.d3-list').textContent, /Dokument-ID fehlt/);
     assert.doesNotMatch(fixture.host.querySelector('.d3-metadata').textContent, /Beschreibung T1/);
-    assert.equal(fixture.host.querySelector('.d3-document .d3-icon').disabled, false);
+    assert.equal(fixture.host.querySelector('.d3-document button.d3-icon').disabled, false);
   } finally { fixture.dom.window.close(); }
 });
 
@@ -552,7 +555,7 @@ test('preview selection ignores stale fetch and revokes object URLs on removal',
   } finally { fixture.dom.window.close(); }
 });
 
-test('TXT CSV JSON XML render as escaped text; DOCX uses the D3 preview UI without downloading the original', async () => {
+test('TXT CSV JSON XML render as escaped text; DOCX offers the external D3 preview without downloading the original', async () => {
   const downloads = [];
   const documents = [
     doc('TXT1', { Name: 'notes.txt', Dateityp: 'TXT' }),
@@ -595,10 +598,60 @@ test('TXT CSV JSON XML render as escaped text; DOCX uses the D3 preview UI witho
     preview = await select('data.xml');
     assert.equal(preview.textContent, '<root><value>&lt;b&gt;</value></root>');
     fixture.host.querySelector('.d3-document-select[title="letter.docx"]').click();
-    const frame = fixture.host.querySelector('.d3-dms-preview iframe');
-    assert.equal(frame.src, 'https://d3.example/dms/r/repo/o2/DOCX1/preview');
-    assert.equal(fixture.host.querySelector('.d3-preview-link').href, frame.src);
+    assert.equal(fixture.host.querySelector('.d3-dms-preview iframe'), null);
+    assert.match(fixture.host.querySelector('.d3-dms-preview').textContent, /Sicherheitsgruenden/);
+    assert.equal(fixture.host.querySelector('.d3-preview-link').href, 'https://d3.example/dms/r/repo/o2/DOCX1/preview');
     assert.deepEqual(downloads, ['TXT1', 'CSV1', 'JSON1', 'XML1']);
+  } finally { fixture.dom.window.close(); }
+});
+
+test('DOCX tries direct D3 preview PDF endpoint via /v/current/b/p1/c', async () => {
+  const calls = [];
+  const fixture = setup({
+    list: () => [doc('DOCX1', { Name: 'letter.docx', Dateityp: 'DOCX' })],
+    metadata: () => [metadata('DOCX1')],
+    fetch: async (url) => {
+      const original = decodeURIComponent(new URL(url).searchParams.get('url'));
+      calls.push(original);
+      if (original.includes('/v/current/b/p1/c')) {
+        return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/octet-stream' } });
+      }
+      return new Response('unexpected', { status: 500 });
+    }
+  });
+  try {
+    await fixture.mount();
+    fixture.host.querySelector('.d3-document-select[title="letter.docx"]').click();
+    await until(() => fixture.host.querySelector('.d3-preview-media'));
+    const preview = fixture.host.querySelector('.d3-preview-media');
+    assert.equal(preview.tagName, 'IFRAME');
+    assert.ok(preview.src.startsWith('blob:mock/'));
+    assert.ok(calls.some((item) => item.includes('/v/current/b/p1/c')));
+  } finally { fixture.dom.window.close(); }
+});
+
+test('EML tries direct D3 preview PDF endpoint via /v/current/b/p1/c', async () => {
+  const calls = [];
+  const fixture = setup({
+    list: () => [doc('EML1', { Name: 'mail.eml', Dateityp: 'EML' })],
+    metadata: () => [metadata('EML1')],
+    fetch: async (url) => {
+      const original = decodeURIComponent(new URL(url).searchParams.get('url'));
+      calls.push(original);
+      if (original.includes('/v/current/b/p1/c')) {
+        return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/octet-stream' } });
+      }
+      return new Response('unexpected', { status: 500 });
+    }
+  });
+  try {
+    await fixture.mount();
+    fixture.host.querySelector('.d3-document-select[title="mail.eml"]').click();
+    await until(() => fixture.host.querySelector('.d3-preview-media'));
+    const preview = fixture.host.querySelector('.d3-preview-media');
+    assert.equal(preview.tagName, 'IFRAME');
+    assert.ok(preview.src.startsWith('blob:mock/'));
+    assert.ok(calls.some((item) => item.includes('/v/current/b/p1/c')));
   } finally { fixture.dom.window.close(); }
 });
 
@@ -645,6 +698,7 @@ test('Edge desktop/mobile layout, real image preview, drag payload and multiple 
     });
     await page.addScriptTag({ content: source });
     await page.evaluate((queryGuid) => window.D3DocumentView.mount(queryGuid, document.getElementById('host')), guid);
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('.d3-logo')).every((image) => image.complete && image.naturalWidth === 447 && image.naturalHeight === 447));
     assert.equal(await page.locator('.viewquery-table .d3-view').count(), 0);
     assert.equal(await page.locator('.viewquery-table').isVisible(), false);
     assert.equal(await page.locator('.bootstrapcontainer .d3-view').count(), 1);
@@ -744,10 +798,11 @@ test('same-origin Quickview expands parent detail area, follows resize and resto
       { width: 1280, height: 1100 }
     ]) {
       await page.setViewportSize(viewport);
-      await page.waitForFunction(() => Math.abs(document.getElementById('quickview').getBoundingClientRect().bottom - (window.innerHeight - 24)) < 2);
+      await page.waitForFunction(() => Math.abs(document.getElementById('quickview').getBoundingClientRect().bottom - (Math.floor(window.innerHeight * 0.97) - 8)) < 2);
       await child.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       const viewBounds = await child.locator('.d3-view').evaluate((view) => ({ bottom: view.getBoundingClientRect().bottom, windowHeight: innerHeight }));
       assert.ok(viewBounds.bottom <= viewBounds.windowHeight, 'view fits after shrinking');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollHeight > document.documentElement.clientHeight), false, 'parent document has no vertical scrollbar');
       assert.equal(await page.locator('#unrelated').evaluate((node) => node.style.height), '80px');
       assert.equal(await child.locator('.d3-upload').isVisible(), false);
       assert.equal(await child.locator('.d3-toolbar .d3-drop').isVisible(), true);
@@ -761,4 +816,31 @@ test('same-origin Quickview expands parent detail area, follows resize and resto
     assert.equal(await page.locator('#details').evaluate((node) => node.style.maxHeight), '260px');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
+});
+
+test('every document row has a server D3 logo link next to the download button with a base64 fallback', async () => {
+  const fixture = setup({ list: () => [doc('T1'), doc('T2')] , metadata: () => [metadata('T1'), metadata('T2')] });
+  try {
+    await fixture.mount();
+    const rows = Array.from(fixture.host.querySelectorAll('.d3-document'));
+    assert.equal(rows.length, 2);
+    rows.forEach((row) => {
+      const children = Array.from(row.children);
+      const link = row.querySelector('.d3-element-link');
+      const download = row.querySelector('.d3-element-link + .d3-icon');
+      assert.equal(children.indexOf(link) + 1, children.indexOf(download));
+      assert.match(link.href, /^https:\/\/d3\.example\/dms\/r\/repo\/o2\/T[12]\/preview$/);
+      assert.equal(link.target, '_blank');
+      assert.equal(link.rel, 'noopener noreferrer');
+      const image = link.querySelector('img');
+      assert.equal(image.src, new fixture.window.URL('../style/wss/d3.png', fixture.window.location.href).href);
+      image.dispatchEvent(new fixture.window.Event('error'));
+      assert.equal(image.dataset.fallback, 'base64');
+      const encoded = image.src.split(',')[1];
+      const png = Buffer.from(encoded, 'base64');
+      assert.equal(png.length, 4034);
+      assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+      assert.equal(png.subarray(-8).toString('hex'), '49454e44ae426082');
+    });
+  } finally { fixture.dom.window.close(); }
 });

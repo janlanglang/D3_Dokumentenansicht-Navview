@@ -23,7 +23,7 @@ Die allgemeine Dashboardvariante ohne `_Artikel`, gemeinsame Bibliotheken und ex
 
 ### Hoehe des Detailbereichs
 
-Bei einer Same-Origin-Einbettung wird das eigene Quickview-iframe bis zum verfuegbaren unteren Rand des Elternfensters erweitert (16 Pixel Abstand). Hoehenbegrenzende Vorfahren auf dem Weg vom iframe zum Seitenrumpf werden bei Bedarf angepasst. Unbeteiligte Container bleiben unveraendert. Fenster-/Groessenaenderungen und Scrollen berechnen die Hoehe neu. Mehrere Komponenten im selben iframe teilen diese Anpassung; nach Entfernen der letzten Ansicht oder beim Verlassen der Seite werden selbst gesetzte Styles wiederhergestellt, sofern AP+ sie zwischenzeitlich nicht geaendert hat.
+Bei einer Same-Origin-Einbettung wird das eigene Quickview-iframe bis 97 Prozent der Elternfensterhoehe erweitert. Die Containerkette zwischen iframe und dem naechsten scrollenden Vorfahren wird einschliesslich `min-height` angepasst, damit ein inneres Element nicht weiterhin ueber die sichtbare Flaeche hinausragt. Unbeteiligte Container bleiben unveraendert. Fenster-/Groessenaenderungen und Scrollen berechnen die Hoehe neu. Mehrere Komponenten im selben iframe teilen diese Anpassung; nach Entfernen der letzten Ansicht oder beim Verlassen der Seite werden selbst gesetzte Styles wiederhergestellt, sofern AP+ sie zwischenzeitlich nicht geaendert hat.
 
 Bei Cross-Origin-Einbettung ist der Zugriff auf den Elternbereich nicht erlaubt; die Ansicht verwendet dann nur den verfuegbaren Platz innerhalb ihres eigenen Fensters. Die hier vorliegende Anfrage-Vorlage enthielt keinen entsprechenden Elternfensteraufruf; diese Anpassung wurde daher separat implementiert und in einem echten Browser mit einem simulierten AP+-Detailbereich getestet.
 
@@ -94,9 +94,9 @@ PDF wird per Blob-URL im iframe dargestellt, browserfaehige Rasterbilder im Bild
 
 `TXT`, `CSV`, `JSON` und `XML` werden ueber den authentifizierten AP+-Proxy geladen und ausschliesslich als Text in einem `pre`-Element ausgegeben. Markup wird nicht als HTML interpretiert. JSON wird mit zwei Leerzeichen formatiert, XML vor der Anzeige mit `DOMParser` validiert, CSV bleibt als Originaltext erhalten. UTF-8 (mit/ohne BOM), UTF-16 LE/BE mit BOM sowie ein Windows-1252-Fallback werden unterstuetzt. Binaere Inhalte mit Nullzeichen werden abgelehnt. Die Textvorschau ist auf 5 MiB begrenzt; groessere Dateien bleiben herunterladbar.
 
-Fuer andere Formate wie `DOCX`, `XLSX`, `MSG` oder `EML` wird die offizielle D3-UI-Vorschau `GET /dms/r/{repositoryId}/o2/{dmsObjectId}/preview` vom bereits validierten D3-Host in einem iframe geoeffnet. Die URL wird nur aus Repository und Dokument-ID des validierten Downloadpfads aufgebaut. Ein Link zum Oeffnen in einem neuen Fenster bleibt sichtbar. Die D3-Preview kann intern die von D3 erzeugte PDF-/Rendition-Darstellung verwenden; der Client interpretiert deren HTML nicht selbst.
+Fuer andere Formate wie `DOCX`, `XLSX`, `MSG`, `EML` oder `EMAIL` wird aus dem validierten Downloadpfad direkt `GET /dms/r/{repositoryId}/o2/{dmsObjectId}/v/current/b/p1/c` ueber den AP+-Proxy als PDF versucht. Wenn dieser Abruf keine PDF liefert, zeigt die Komponente nur noch den Link auf die offizielle D3-UI-Vorschau `GET /dms/r/{repositoryId}/o2/{dmsObjectId}/preview` im neuen Fenster. Die URL wird nur aus Repository und Dokument-ID des validierten Downloadpfads aufgebaut.
 
-Ob die D3-UI im iframe dargestellt werden darf, haengt von Anmeldung, Cookies sowie `Content-Security-Policy`/`X-Frame-Options` der installierten D3-Version ab und muss live geprueft werden. Bei blockierter Einbettung kann der Link im neuen Fenster funktionieren. Es werden keine Header umgangen und kein Office- oder Mailparser in den Browser eingebaut.
+Die Livepruefung am 05.10.2026 ergab `Content-Security-Policy: frame-ancestors 'self'` und `X-Frame-Options: SAMEORIGIN`. AP+ (`applustest`) darf D3 (`systec-vs72`) deshalb nicht in einem iframe einbetten. Es werden keine Header umgangen und kein Office- oder Mailparser in den Browser eingebaut.
 
 Alte Vorschauanforderungen werden abgebrochen, Blob-URLs beim Wechsel freigegeben. Andere Dateitypen koennen weiterhin heruntergeladen werden.
 
