@@ -102,6 +102,91 @@ Alte Vorschauanforderungen werden abgebrochen, Blob-URLs beim Wechsel freigegebe
 
 Downloads laufen ueber den authentifizierten AP+-Proxy. Beim Herausziehen wird Chromiums nichtstandardisiertes `DownloadURL` angeboten. Ob ein Ziel daraus eine echte Datei uebernimmt, muss mit Explorer sowie klassischem/neuem Outlook getestet werden. Ein synthetischer Drag-Test beweist keine native Dateiuebergabe. Der normale Downloadknopf ist der vereinbarte Ersatz.
 
+## Document Proxy
+
+Der Document Proxy ist ein serverseitiger Durchreicher zwischen AP+ und D3. Er ruft die Datei nicht direkt im Browser vom D3-Host ab, sondern ueber einen kontrollierten AP+-Endpunkt.
+
+Kurz gesagt macht der Proxy drei Dinge:
+- Er prueft die Ziel-URL (nur erlaubter D3-Host).
+- Er fuehrt den authentifizierten Request an D3 aus und holt den Inhalt.
+- Er liefert Content-Type und Dateiname an den Browser weiter, damit Vorschau/Download wie eine normale Datei funktionieren.
+
+Damit bleiben Authentifizierung und Sicherheitspruefung zentral im Backend; der Browser bekommt nur den freigegebenen Antwortstream.
+
+``
+    [WebMethod]
+    public void ProxyDocument(string url)
+    {
+      // Sicherheitsprüfung: Nur erlaubte Domain
+      if (string.IsNullOrEmpty(url) || !url.StartsWith("https://systec-vs72.systec-lab.local", StringComparison.OrdinalIgnoreCase))
+      {
+        HttpContext.Current.Response.StatusCode = 400;
+        HttpContext.Current.Response.Write("Ungültige D3-URL.");
+        return;
+      }
+
+      // CORS erlauben
+      HttpContext.Current.Response.AddHeader("Access-Control-Allow-Origin", "*");
+
+      // Anfrage an Dokumentserver
+      var request = (HttpWebRequest)WebRequest.Create(url);
+      request.Method = "GET";
+      request.Headers.Add("Authorization", "Bearer TOKEN_REMOVED");
+
+      try
+      {
+        using (var response = (HttpWebResponse)request.GetResponse())
+        {
+          string contentType = response.ContentType;
+          string fileName = null;
+
+          // Content-Disposition auslesen
+          string contentDisposition = response.Headers["Content-Disposition"];
+          if (!string.IsNullOrEmpty(contentDisposition))
+          {
+            // RFC 5987: filename*=utf-8''...
+            var matchExt = Regex.Match(contentDisposition, @"filename\*\s*=\s*utf-8''(?<file>.+)", RegexOptions.IgnoreCase);
+            if (matchExt.Success)
+            {
+              fileName = HttpUtility.UrlDecode(matchExt.Groups["file"].Value);
+            }
+            else
+            {
+              // Standard: filename="..."
+              var matchStd = Regex.Match(contentDisposition, @"filename\s*=\s*""?(?<file>[^"";]+)""?", RegexOptions.IgnoreCase);
+              if (matchStd.Success)
+              {
+                fileName = matchStd.Groups["file"].Value;
+              }
+            }
+          }
+
+          // Fallback: Dateiname aus URL
+          if (string.IsNullOrEmpty(fileName))
+          {
+            fileName = Path.GetFileName(url);
+          }
+
+          // Content-Disposition: inline
+          HttpContext.Current.Response.AddHeader("Content-Disposition", $"inline; filename=\"{fileName}\"");
+          HttpContext.Current.Response.AddHeader("filename", fileName);
+          HttpContext.Current.Response.ContentType = contentType;
+
+          using (var stream = response.GetResponseStream())
+          {
+            stream.CopyTo(HttpContext.Current.Response.OutputStream);
+          }
+          HttpContext.Current.Response.Flush();
+        }
+      }
+      catch (WebException ex)
+      {
+        HttpContext.Current.Response.StatusCode = 502;
+        HttpContext.Current.Response.Write("Fehler beim Abruf des Dokuments: " + ex.Message);
+      }
+    }
+``
+
 ## Tests
 
 Die [Regressionstests](tests/d3-view.test.cjs) laufen ohne AP+ gegen simulierte Schnittstellen. Testpakete koennen ausserhalb des Projekts installiert werden:
