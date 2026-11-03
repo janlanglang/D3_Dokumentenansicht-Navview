@@ -35,6 +35,19 @@ Erwartete Dokumentfelder: `Name`, `Dokumenttyp`, `Datum`, `Dateityp` und `_pathW
 
 Metadaten und erlaubte Uploadarten werden nativ in der D3_004-SQL-Abfrage gelesen. Es gibt dafuer keine `dbFetchJSON`-Aufrufe mehr. Damit wird dieselbe Datenbankverbindung verwendet wie bei normalen Quickviewabfragen, in denen die D3-Views laut Nutzer verfuegbar sind.
 
+Wenn die D3-Datenbank als Verbindungsserver eingerichtet ist, koennen AP+-Tabellennamen gut ueber SQL-Synonyme auf die D3-Tabellen gemappt werden. Beispiel:
+
+```sql
+USE [APplusDeploy]
+GO
+
+/****** Objekt:  Synonym [dbo].[arten_dokumente_d3]    Skriptdatum: 03.11.2026 08:43:04 ******/
+CREATE SYNONYM [dbo].[arten_dokumente_d3] FOR [SYSTEC-VS73.SYSTEC-LAB.LOCAL].[D3T].[dbo].[arten_dokumente]
+GO
+```
+
+Danach muss in AP-Plus in der Tabelle `Tabellen` nur noch das Synonym eingetragen werden.
+
 Die Abfrage liefert auch ohne Dokumente eine Kontextzeile. Zwei korrelierte `FOR JSON PATH, INCLUDE_NULL_VALUES`-Unterabfragen liefern `d3metadata` und `d3types`, jeweils als JSON-Array. Das vermeidet einen Verlust von Metadaten durch die Paginierung vieler Querytabellenzeilen und erhaelt fachlich leere Felder.
 
 Beim ersten Mount werden die JSON-Felder aus den Attributen der anschliessend ausgeblendeten Tabellenzeile gelesen. Falls AP+ die JSON-Spalten nicht als Attribute rendert, wird D3_004 ueber den Query-Helfer geladen. Aktualisieren, erneute Hooks und der Abschluss eines Uploadlaufs laden die native Abfrage erneut; der anfaengliche versteckte Tabellenstand wird dabei nicht als frische Daten wiederverwendet. Rueckgaben mit falscher Tabelle/ID oder fehlenden JSON-Spalten werden abgelehnt.
@@ -79,14 +92,30 @@ Konfiguration wird beim Anlegen einer Instanz eingelesen; nach Aenderungen die U
 - Der untere Uploadbereich wird nur bei mindestens einer Datei in der Warteschlange angezeigt. Nach Entfernen oder erfolgreichem Hochladen der letzten Datei verschwindet er wieder. Fehlerhafte oder ungeklaerte Uploads bleiben sichtbar; das Ablagefeld oben bleibt immer verfuegbar.
 - Pflichtfelder: Dateiname und zulaessige Dokumentart. Standard `Schriftverkehr`, falls fuer die Tabelle erlaubt. Beschreibung aus Dateiname ohne Endung; Beschreibung, Sprache und Revision duerfen leer bleiben.
 - Sprachen: leer, DE, EN, FR, ES. Keine eigene Dateityp-/Groessenbeschraenkung; Serverregeln gelten.
-- Sequenzielle POSTs an `../custom/Anp_DMSUploadTarget.aspx` mit `filename`, `Description`, `DocumentType`, `sprache`, `Revision`, `revision`, `FileChooser`, `NavTable`, `Id`.
+- Sequenzielle POSTs an `../custom/Anp_DMSUploadTarget.aspx` mit `filename`, `Description`, `DocumentType`, `sprache`, `Revision`, `revision`, `AlterationText`, `FileChooser`, `NavTable`, `Id`.
 - Bestaetigte Erfolge verschwinden aus der Warteschlange; Fehler bleiben erhalten. Ein Datensatzwechsel verwirft wartende Uploads, aendert aber niemals das Ziel eines bereits laufenden Requests.
+
+Backend-Anpassung fuer den D3-Abschlussrequest in `D3RestConnection.cs`:
+
+```csharp
+updateDocumentRequest.AddJsonBody(new FinishUploadRequest {
+  //CUSTOM BEGIN: JLA: 20261030: Versionshinweis an D3 uebergeben
+  AlterationText = document.Properties.ContainsKey("alterationtext")
+    && !string.IsNullOrWhiteSpace(document.Properties["alterationtext"])
+      ? document.Properties["alterationtext"]
+      : "New version",
+  //CUSTOM END: JLA: 20261030: Versionshinweis an D3 uebergeben
+  SourceId = SourceId,
+  SourceCategory = Mapper.MapDocumentType(document),
+  Filename = System.IO.Path.GetFileName(docFileName),
+  ContentLocationUri = uploadLocation,
+  SourceProperties = new SourceProperties { Properties = properties }
+});
+```
 
 ### Uploadbestaetigung
 
-Ohne bekannten Backendantwortvertrag wird nicht allein HTTP 200 als Archivierungserfolg gewertet. Akzeptiert werden `OK`, `success`, `true` oder JSON mit `success: true` bzw. `status`/`result` gleich `OK`/`success`. JSON-Fehler werden angezeigt. Leere/unbekannte Antworten, Weiterleitungen oder unterbrochene Uebertragungen gelten als unklar; Wiederholung erfordert eine ausdrueckliche Freigabe nach Pruefung im Archiv, um Duplikate zu vermeiden.
-
-Wenn der vorhandene Endpunkt ein anderes **nachgewiesenes** Erfolgsformat verwendet, kann `D3DocumentViewConfig.confirmUpload(body, response)` es pruefen und nur bei sicherem Erfolg `true` zurueckgeben. Keine pauschale Funktion `return response.ok` einsetzen. Diese Pruefung ist vor Produktivabnahme am echten Endpunkt erforderlich.
+HTTP-Fehler werden als Uploadfehler behandelt. Bei Weiterleitungen wird der Status als unklar markiert; vor einer Wiederholung soll im Archiv geprueft werden, ob die Datei bereits abgelegt wurde.
 
 ### Vorschau und Drag-out
 

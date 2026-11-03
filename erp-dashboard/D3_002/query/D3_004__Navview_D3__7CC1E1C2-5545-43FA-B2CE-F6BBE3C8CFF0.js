@@ -56,6 +56,47 @@
 		return [...new Set(values)].sort((left, right) => left.localeCompare(right, 'de'));
 	}
 
+	function parseVersionEntries(value) {
+		if (value === null || value === undefined) return [];
+		let parsed = value;
+		for (let depth = 0; depth < 3 && typeof parsed === 'string'; depth += 1) {
+			const trimmed = parsed.trim();
+			if (!trimmed) return [];
+			try {
+				parsed = JSON.parse(trimmed);
+			} catch (error) {
+				return [];
+			}
+		}
+		if (!Array.isArray(parsed)) return [];
+		return parsed.map((entry) => ({
+			versionId: text(entry && (entry.version_id ?? entry.versionId)),
+			createDate: text(entry && (entry.create_date ?? entry.createDate)),
+			createUser: text(entry && (entry.create_user ?? entry.createUser)),
+			docState: text(entry && (entry.doc_state ?? entry.docState))
+		})).filter((entry) => entry.versionId || entry.createDate || entry.createUser || entry.docState)
+			.sort((left, right) => {
+				const leftTime = Date.parse(left.createDate || '');
+				const rightTime = Date.parse(right.createDate || '');
+				if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && rightTime !== leftTime) return rightTime - leftTime;
+				const leftVersion = Number(left.versionId);
+				const rightVersion = Number(right.versionId);
+				if (Number.isFinite(leftVersion) && Number.isFinite(rightVersion) && rightVersion !== leftVersion) return rightVersion - leftVersion;
+				return String(right.versionId).localeCompare(String(left.versionId), 'de', { numeric: true, sensitivity: 'base' });
+			});
+	}
+
+	function formatHistoryDate(value) {
+		const source = text(value);
+		if (!source) return '-';
+		const date = new Date(source);
+		if (Number.isNaN(date.getTime())) return source;
+		return date.toLocaleString('de-DE', {
+			year: 'numeric', month: '2-digit', day: '2-digit',
+			hour: '2-digit', minute: '2-digit'
+		});
+	}
+
 	function normalizeDocuments(response, baseUrl) {
 		const base = new URL(baseUrl);
 		if (base.protocol !== 'https:' && base.protocol !== 'http:') throw new Error('Ungueltige D3-Adresse.');
@@ -89,12 +130,13 @@
 				type: text(record.Dokumenttyp) || 'Ohne Dokumentart', date: text(record.Datum),
 				extension: extension, url: url, linkError: linkError,
 				description: null, language: null, revision: null, size: null,
+				currentVersionId: '', versionHistory: [],
 				metadataError: id ? 'Metadaten noch nicht geladen.' : 'D3-Dokument-ID fehlt in SOAP-Ausgabe und Dateipfad.'
 			};
 		});
 	}
 
-	function enrichDocuments(documents, rows, repositoryId) {
+	function enrichDocuments(documents, rows, repositoryId, versionRows) {
 		const records = parseRows(rows).map(toRecord);
 		const byId = new Map();
 		records.forEach(function (record) {
@@ -102,8 +144,18 @@
 			if (!byId.has(id)) byId.set(id, []);
 			byId.get(id).push(record);
 		});
+		const versionRecords = parseRows(versionRows).map(toRecord);
+		const versionById = new Map();
+		versionRecords.forEach(function (record) {
+			const id = text(record.D3DocumentId || record.doku_id);
+			if (!id) return;
+			const entries = parseVersionEntries(record.VersionHistory || record.versionhistory || record.version_history);
+			versionById.set(id, entries);
+		});
 		return documents.map(function (document) {
 			const result = Object.assign({}, document);
+			result.versionHistory = versionById.get(document.id) || [];
+			result.currentVersionId = result.versionHistory.length ? text(result.versionHistory[0].versionId) : '';
 			if (!document.id) return result;
 			if (!repositoryId || document.repository !== repositoryId || document.linkError) {
 				result.metadataError = 'SQL-Archivzuordnung nicht bestaetigt.';
@@ -170,10 +222,11 @@
 		if (received.key !== context.key) throw new Error('D3_004 lieferte Daten fuer einen anderen Datensatz.');
 		const metadata = field('d3metadata');
 		const types = field('d3types');
+		const versionHistory = field('d3versionhistory');
 		if (metadata === undefined || metadata === null || types === undefined || types === null) {
 			throw new Error('D3_004: d3metadata oder d3types fehlt. Bitte die SQL-Abfrage aktualisieren.');
 		}
-		return { metadata: metadata, types: types };
+		return { metadata: metadata, types: types, versionHistory: versionHistory === undefined || versionHistory === null ? '[]' : versionHistory };
 	}
 
 	async function loadQueryPayload(context) {
@@ -190,6 +243,15 @@
 	}
 
 	function assessUpload(body) {
+		if (body && typeof body === 'object') {
+			const parsed = body;
+			if (parsed.error || parsed.success === false || Number(parsed.severity) >= 3) {
+				const error = new Error(text(parsed.message || parsed.reason || parsed.error) || 'Upload vom Server abgelehnt.');
+				error.uploadRejected = true;
+				throw error;
+			}
+			return parsed.success === true || /^(ok|success)$/i.test(text(parsed.status || parsed.result));
+		}
 		const value = text(body);
 		if (/^(ok|success|true)$/i.test(value)) return true;
 		let parsed;
@@ -308,7 +370,8 @@
 		if (!row || !row.hasAttribute('data-d3metadata') || !row.hasAttribute('data-d3types')) return null;
 		return parseQueryPayload([{
 			id: row.getAttribute('data-id'), tabelle: row.getAttribute('data-tabelle'),
-			d3metadata: row.getAttribute('data-d3metadata'), d3types: row.getAttribute('data-d3types')
+			d3metadata: row.getAttribute('data-d3metadata'), d3types: row.getAttribute('data-d3types'),
+			d3versionhistory: row.getAttribute('data-d3versionhistory')
 		}], context);
 	}
 
@@ -607,7 +670,7 @@
 				if (repositoryId) {
 					try {
 						if (results[1].status === 'rejected') throw results[1].reason;
-						documents = enrichDocuments(documents, results[1].value.metadata, repositoryId);
+						documents = enrichDocuments(documents, results[1].value.metadata, repositoryId, results[1].value.versionHistory);
 					} catch (error) {
 						documents.forEach((document) => { document.metadataError = 'Quickview-Metadaten: ' + error.message; });
 					}
@@ -649,7 +712,7 @@
 			this.ui.count.textContent = '(' + this.documents.length + ')';
 			const search = text(this.ui.search.value).toLocaleLowerCase('de');
 			const documents = this.documents.filter((document) => [document.name, document.type, document.description, document.language,
-				document.revision, document.date].join(' ').toLocaleLowerCase('de').includes(search));
+				document.revision, document.date, document.currentVersionId].join(' ').toLocaleLowerCase('de').includes(search));
 			if (!documents.length) this.ui.list.append(element('p', 'd3-empty', search ? 'Keine Treffer.' : 'Keine Dokumente vorhanden.'));
 			const groups = new Map();
 			documents.forEach((document) => {
@@ -709,7 +772,31 @@
 					[['Beschreibung', document.description], ['Sprache', document.language], ['Revision', document.revision],
 						['Datum', document.date], ['Groesse', document.size === null ? null : formatSize(document.size)]].forEach(([label, value]) => {
 						const cell = element('div');
-						cell.append(element('dt', '', label), element('dd', '', value === null ? 'Nicht verfuegbar' : value || '-'));
+						const dd = element('dd');
+						if (label === 'Beschreibung') {
+							const wrap = element('span', 'd3-description-wrap');
+							wrap.append(element('span', 'd3-description-text', value === null ? 'Nicht verfuegbar' : value || '-'));
+							if (document.currentVersionId) {
+								const badge = element('span', 'd3-version-badge', 'Version ' + document.currentVersionId);
+								badge.tabIndex = 0;
+								badge.setAttribute('role', 'note');
+								const popup = element('span', 'd3-version-popup');
+								popup.append(element('strong', '', 'Versionshistorie'));
+								const list = element('span', 'd3-version-list');
+								document.versionHistory.forEach((entry) => {
+									const rowText = 'V' + (entry.versionId || '?') + ' - ' + formatHistoryDate(entry.createDate) + ' - ' + (entry.createUser || 'Unbekannt');
+									list.append(element('span', 'd3-version-item', rowText));
+								});
+								if (!document.versionHistory.length) list.append(element('span', 'd3-version-item', 'Keine Historie gefunden.'));
+								popup.append(list);
+								badge.append(popup);
+								wrap.append(badge);
+							}
+							dd.append(wrap);
+						} else {
+							dd.textContent = value === null ? 'Nicht verfuegbar' : value || '-';
+						}
+						cell.append(element('dt', '', label), dd);
 						details.append(cell);
 					});
 					row.append(details);
@@ -858,7 +945,7 @@
 				row.dataset.key = String(item.key);
 				row.append(element('div', 'd3-upload-source', item.file.name + ' (' + formatSize(item.file.size) + ')'));
 				const locked = item.status === 'uploading' || item.status === 'uncertain';
-				const field = (label, name, options) => {
+				const field = (label, name, options, config) => {
 					const wrapper = element('label', 'd3-field');
 					wrapper.append(element('span', '', label));
 					const control = element(options ? 'select' : 'input');
@@ -867,6 +954,7 @@
 						options.forEach(([value, caption]) => {
 							const option = element('option', '', caption);
 							option.value = value;
+							if (config && config.disableEmptyOption && value === '') option.disabled = true;
 							control.append(option);
 						});
 					} else control.type = 'text';
@@ -887,7 +975,7 @@
 				field('Dateiname *', 'filename');
 				field('Beschreibung', 'description');
 				const typePlaceholder = this.typesFallback && this.types.length ? [] : [['', this.types.length ? 'Auswählen' : 'Keine Dokumentarten geladen']];
-				field('Dokumentart *', 'doctype', typePlaceholder.concat(this.types.map((type) => [type, type])));
+				field('Dokumentart *', 'doctype', typePlaceholder.concat(this.types.map((type) => [type, type])), { disableEmptyOption: true });
 				field('Sprache', 'language', languages);
 				field('Revision', 'revision');
 				const remove = iconButton('\u00d7', 'Aus Warteschlange entfernen');
@@ -944,21 +1032,18 @@
 					this.renderQueue();
 					const form = new root.FormData();
 					Object.entries({ filename: item.filename, Description: text(item.description), DocumentType: item.doctype,
-						sprache: text(item.language), Revision: text(item.revision),
+						sprache: text(item.language), Revision: text(item.revision), AlterationText: text(item.revision),
 						NavTable: context.table, Id: context.id }).forEach(([key, value]) => form.append(key, value));
 					form.append('FileChooser', item.file);
 					try {
 						const response = await root.fetch('../custom/Anp_DMSUploadTarget.aspx', { method: 'POST', credentials: 'same-origin', body: form });
-						const body = await response.text();
 						if (!response.ok) {
 							item.status = response.status >= 500 ? 'uncertain' : 'pending';
 							throw new Error('Upload fehlgeschlagen (HTTP ' + response.status + ').');
 						}
-						const confirmed = !response.redirected && (typeof this.config.confirmUpload === 'function'
-							? await this.config.confirmUpload(body, response) : assessUpload(body));
-						if (confirmed !== true) {
+						if (response.redirected) {
 							item.status = 'uncertain';
-							item.error = 'Servererfolg nicht eindeutig bestätigt. Archiv prüfen, bevor erneut gesendet wird.';
+							item.error = 'Uploadantwort wurde weitergeleitet. Archiv pruefen, bevor erneut gesendet wird.';
 							failures += 1;
 						} else {
 							successes += 1;
