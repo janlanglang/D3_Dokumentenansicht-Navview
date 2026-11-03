@@ -1,7 +1,7 @@
 SELECT
 	record.id,
 	'$P{tabelle}' AS tabelle,
-	(
+	ISNULL((
 		SELECT
 			fs.doku_id AS D3DocumentId,
 			CONVERT(nvarchar(max), pd.[text]) AS Beschreibung,
@@ -14,13 +14,13 @@ SELECT
 		  AND UPPER(LTRIM(RTRIM(fs.dok_dat_feld_11))) = UPPER('$P{tabelle}')
 		  AND fs.dok_dat_feld_80 = CONVERT(varchar(30), record.id)
 		FOR JSON PATH, INCLUDE_NULL_VALUES
-	) AS d3metadata,
-	(
+	), '[]') AS d3metadata,
+	ISNULL((
 		SELECT DISTINCT DMSDOCUMENTTYPEREF.DMSDOCUMENTTYPE AS DMSDOCUMENTTYPE
 		FROM ASDEFINITION
 		JOIN DMSDOCUMENTTYPEREF ON DMSDOCUMENTTYPEREF.asdefinition = ASDEFINITION.definition
 		WHERE UPPER(LTRIM(RTRIM(ASDEFINITION.TABELLE))) = UPPER('$P{tabelle}')
 		FOR JSON PATH, INCLUDE_NULL_VALUES
-	) AS d3types
+	), '[]') AS d3types
 FROM $P{tabelle} AS record
 WHERE record.id = $P{id}
