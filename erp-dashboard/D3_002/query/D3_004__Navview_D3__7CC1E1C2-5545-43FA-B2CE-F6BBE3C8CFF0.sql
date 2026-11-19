@@ -25,10 +25,15 @@ SELECT
 					dv.doc_state,
 					dv.version_id,
 					dv.create_date,
-					dv.create_user,
+					COALESCE(userMatch.login, dv.create_user) AS create_user,
 					dv.change_reason,
 					dv.delete_reason
 				FROM dbo.doc_versions_d3 AS dv
+				OUTER APPLY (
+					SELECT CASE WHEN COUNT(*) = 1 THEN MAX(p.login) END AS login
+					FROM personal AS p
+					WHERE p.login LIKE dv.create_user + '%'
+				) AS userMatch
 				WHERE dv.doc_id = fs.doku_id
 				FOR JSON PATH, INCLUDE_NULL_VALUES
 			), '[]') AS VersionHistory

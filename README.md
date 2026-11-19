@@ -9,10 +9,10 @@ Die wiederverwendbare Implementierung liegt in den D3_004-Queryressourcen:
 
 ## Einbindung in AP+
 
-1. Query-SQL und Query-JavaScript gemeinsam aktualisieren; das Komponenten-CSS ebenfalls einbinden. Die SQL-Version mit `d3metadata` und `d3types` ist erforderlich.
+1. Query-SQL und Query-JavaScript gemeinsam aktualisieren; das Komponenten-CSS ebenfalls einbinden. Die SQL-Version mit `d3metadata`, `d3types` und `d3versionhistory` ist erforderlich.
 2. Das Dashboard bindet D3_004 ein und uebergibt `tabelle` und `id` ueber die AP+-GUI. Es braucht lediglich den Initialisierungsaufruf aus dem Artikel-Dashboard, keine kopierte Komponentenlogik.
 3. `event_table_loaded` reicht den Ereignisbezeichner und `tableContainer` an `D3DocumentView.mount` weiter. Der Einstieg puffert Aufrufe, wenn die Queryressourcen erst danach geladen werden. Er erkennt die bekannte Query-GUID, den Namen `D3_004` oder eine Kontextzeile mit `data-tabelle` und `data-id` im uebergebenen Container. Ein abweichender Laufzeitbezeichner blockiert diese Kontextzeile nicht. Unbekannte Queries ohne Kontextzeile werden ignoriert; es gibt keine globale Suche nach beliebigen Tabellen.
-4. Die Kontextabfrage liefert eine Zeile mit `id`, `tabelle`, `d3metadata` und `d3types`. Im HTML werden `data-id`, `data-tabelle`, `data-d3metadata` und `data-d3types` gelesen. Nur gespeicherte Datensaetze mit positiver numerischer ID werden akzeptiert.
+4. Die Kontextabfrage liefert eine Zeile mit `id`, `tabelle`, `d3metadata`, `d3types` und `d3versionhistory`. Im HTML werden `data-id`, `data-tabelle`, `data-d3metadata`, `data-d3types` und `data-d3versionhistory` gelesen. Nur gespeicherte Datensaetze mit positiver numerischer ID werden akzeptiert.
 5. `apqv-ext-queryutils` muss eingebunden bleiben. Fuer Aktualisierungen wird `extQueryUtils.callWithQueryDataAsync('D3_004', { tabelle, id })` verwendet; dieser vorhandene Helfer ruft `Query.aspx` im Quickview-Kontext auf.
 
 Die Originaltabelle bzw. ihr `.viewquery-table`-Wrapper wird gezielt ausgeblendet. Die neue Ansicht wird daneben in einem eigenen `.bootstrapcontainer.d3-shell` eingesetzt, nicht innerhalb der ausgeblendeten Tabelle. Andere Querytabellen bleiben unveraendert. Es gibt weiterhin nur einen Dashboard-Hook; zwei Definitionen von `event_table_loaded` wuerden sich gegenseitig ueberschreiben.
@@ -48,7 +48,7 @@ GO
 
 Danach muss in AP-Plus in der Tabelle `Tabellen` nur noch das Synonym eingetragen werden.
 
-Die Abfrage liefert auch ohne Dokumente eine Kontextzeile. Zwei korrelierte `FOR JSON PATH, INCLUDE_NULL_VALUES`-Unterabfragen liefern `d3metadata` und `d3types`, jeweils als JSON-Array. Das vermeidet einen Verlust von Metadaten durch die Paginierung vieler Querytabellenzeilen und erhaelt fachlich leere Felder.
+Die Abfrage liefert auch ohne Dokumente eine Kontextzeile. Drei korrelierte `FOR JSON PATH, INCLUDE_NULL_VALUES`-Unterabfragen liefern `d3metadata`, `d3types` und `d3versionhistory`, jeweils als JSON-Array. Das vermeidet einen Verlust von Metadaten durch die Paginierung vieler Querytabellenzeilen und erhaelt fachlich leere Felder. Beim aktuellen Versions-Badge wird `change_reason` angezeigt, sofern gesetzt; andernfalls bleibt es bei `version_id`. Das Hover-Popup zeigt Version, Datum und Benutzer als `(Vx) | DD.MM.YYYY, HH:MM | user`; bei einem nicht-leeren, nicht-standardisierten `change_reason` steht dieser zusaetzlich als `Rev: ...` nach der Versionsnummer.
 
 Beim ersten Mount werden die JSON-Felder aus den Attributen der anschliessend ausgeblendeten Tabellenzeile gelesen. Falls AP+ die JSON-Spalten nicht als Attribute rendert, wird D3_004 ueber den Query-Helfer geladen. Aktualisieren, erneute Hooks und der Abschluss eines Uploadlaufs laden die native Abfrage erneut; der anfaengliche versteckte Tabellenstand wird dabei nicht als frische Daten wiederverwendet. Rueckgaben mit falscher Tabelle/ID oder fehlenden JSON-Spalten werden abgelehnt.
 
@@ -95,7 +95,7 @@ Konfiguration wird beim Anlegen einer Instanz eingelesen; nach Aenderungen die U
 - Sequenzielle POSTs an `../custom/Anp_DMSUploadTarget.aspx` mit `filename`, `Description`, `DocumentType`, `sprache`, `Revision`, `revision`, `AlterationText`, `FileChooser`, `NavTable`, `Id`.
 - Bestaetigte Erfolge verschwinden aus der Warteschlange; Fehler bleiben erhalten. Ein Datensatzwechsel verwirft wartende Uploads, aendert aber niemals das Ziel eines bereits laufenden Requests.
 
-Backend-Anpassung fuer den D3-Abschlussrequest in `D3RestConnection.cs`:
+Backend-Anpassung in `D3RestConnection.cs`, Funktion `UploadDocumentVersion`: Beim D3-Abschlussrequest wird der Versionshinweis aus `document.Properties["alterationtext"]` uebergeben. Fehlt der Wert oder besteht er nur aus Leerzeichen, wird `New version` verwendet.
 
 ```csharp
 updateDocumentRequest.AddJsonBody(new FinishUploadRequest {
@@ -142,79 +142,258 @@ Kurz gesagt macht der Proxy drei Dinge:
 
 Damit bleiben Authentifizierung und Sicherheitspruefung zentral im Backend; der Browser bekommt nur den freigegebenen Antwortstream.
 
-``
-    [WebMethod]
-    public void ProxyDocument(string url)
-    {
-      // Sicherheitsprüfung: Nur erlaubte Domain
-      if (string.IsNullOrEmpty(url) || !url.StartsWith("https://systec-vs72.systec-lab.local", StringComparison.OrdinalIgnoreCase))
-      {
-        HttpContext.Current.Response.StatusCode = 400;
-        HttpContext.Current.Response.Write("Ungültige D3-URL.");
-        return;
-      }
+```aspx
+<%@ Page language="c#" AutoEventWireup="false" %>
+<%@ OutputCache Location="None" %>
+<%@ Register TagPrefix="p2plus" Namespace="p2plus.WebControls" Assembly="P2plusWeb" %>
+<%@ Import Namespace="System.Data" %>
+<%@ Import Namespace="System.Net" %>
+<%@ Import Namespace="p2plus.DMS" %>
+<%@ Import Namespace="System.IO" %>
+<%@ Import Namespace="System.Data.SqlClient" %>
 
-      // CORS erlauben
-      HttpContext.Current.Response.AddHeader("Access-Control-Allow-Origin", "*");
+<script runat="server" type="text/C#">
+  // Dokument-ID direkt über die SQL-Synonyme ermitteln. Mehrere physische
+  // Versionen desselben Dokuments zählen nicht als unterschiedliche Treffer.
+  private string FindRevisionDocumentId(string tableName, string recordId, string uploadFilename) {
+    string basename = Path.GetFileNameWithoutExtension(uploadFilename);
+    string extension = Path.GetExtension(uploadFilename).TrimStart('.');
+    const string sql = @"
+      SELECT DISTINCT TOP (2) fs.doku_id
+        FROM dbo.firmen_spezifisch_d3 AS fs
+       WHERE fs.dok_dat_feld_11 = @tableName
+         AND fs.dok_dat_feld_80 = @recordId
+         AND EXISTS (
+           SELECT 1 FROM dbo.phys_datei_d3 AS pd
+            WHERE pd.doku_id = fs.doku_id
+              AND (pd.dateiname = @basename OR pd.dateiname = @filename)
+              AND pd.datei_erw = @extension
+         );";
 
-      // Anfrage an Dokumentserver
-      var request = (HttpWebRequest)WebRequest.Create(url);
-      request.Method = "GET";
-      request.Headers.Add("Authorization", "Bearer <TOKEN_FROM_SECRET_STORE>");
-
-      try
-      {
-        using (var response = (HttpWebResponse)request.GetResponse())
-        {
-          string contentType = response.ContentType;
-          string fileName = null;
-
-          // Content-Disposition auslesen
-          string contentDisposition = response.Headers["Content-Disposition"];
-          if (!string.IsNullOrEmpty(contentDisposition))
-          {
-            // RFC 5987: filename*=utf-8''...
-            var matchExt = Regex.Match(contentDisposition, @"filename\*\s*=\s*utf-8''(?<file>.+)", RegexOptions.IgnoreCase);
-            if (matchExt.Success)
-            {
-              fileName = HttpUtility.UrlDecode(matchExt.Groups["file"].Value);
-            }
-            else
-            {
-              // Standard: filename="..."
-              var matchStd = Regex.Match(contentDisposition, @"filename\s*=\s*""?(?<file>[^"";]+)""?", RegexOptions.IgnoreCase);
-              if (matchStd.Success)
-              {
-                fileName = matchStd.Groups["file"].Value;
-              }
-            }
+    using (var connection = new SqlConnection(p2plus.p2core.Table.connectStringTable(tableName))) {
+      using (var command = new SqlCommand(sql, connection)) {
+        command.Parameters.Add("@tableName", SqlDbType.NVarChar, -1).Value = tableName;
+        command.Parameters.Add("@recordId", SqlDbType.NVarChar, -1).Value = recordId;
+        command.Parameters.Add("@basename", SqlDbType.NVarChar, -1).Value = basename;
+        command.Parameters.Add("@filename", SqlDbType.NVarChar, -1).Value = Path.GetFileName(uploadFilename);
+        command.Parameters.Add("@extension", SqlDbType.NVarChar, -1).Value = extension;
+        connection.Open();
+        using (var reader = command.ExecuteReader()) {
+          if (!reader.Read()) return null;
+          string documentId = Convert.ToString(reader.GetValue(0));
+          if (string.IsNullOrWhiteSpace(documentId) || reader.Read()) {
+            throw new Exception("Die SQL-Suche nach dem d.3-Dokument ist nicht eindeutig; kein SQL-Update ausgeführt.");
           }
-
-          // Fallback: Dateiname aus URL
-          if (string.IsNullOrEmpty(fileName))
-          {
-            fileName = Path.GetFileName(url);
-          }
-
-          // Content-Disposition: inline
-          HttpContext.Current.Response.AddHeader("Content-Disposition", $"inline; filename=\"{fileName}\"");
-          HttpContext.Current.Response.AddHeader("filename", fileName);
-          HttpContext.Current.Response.ContentType = contentType;
-
-          using (var stream = response.GetResponseStream())
-          {
-            stream.CopyTo(HttpContext.Current.Response.OutputStream);
-          }
-          HttpContext.Current.Response.Flush();
+          return documentId;
         }
       }
-      catch (WebException ex)
-      {
-        HttpContext.Current.Response.StatusCode = 502;
-        HttpContext.Current.Response.Write("Fehler beim Abruf des Dokuments: " + ex.Message);
+    }
+  }
+
+  private void SetInitialRevisionReason(string tableName, string documentId, string reason) {
+    // Direkter Zugriff auf die d.3-Datenbank über das vorhandene SQL-Synonym.
+    // Kein Überschreiben vorhandener Texte oder anderer Dokumentversionen.
+    const string sql = @"
+      DECLARE @HasNewerVersion bit = 0;
+      DECLARE @UpdatedRows int = 0;
+
+      SELECT TOP (1) @HasNewerVersion = 1
+        FROM dbo.doc_versions_d3 AS newer
+       WHERE newer.doc_id = @documentId
+         AND newer.version_id > 0;
+
+      IF @HasNewerVersion = 0
+      BEGIN
+          UPDATE dbo.doc_versions_d3
+             SET change_reason = @reason
+           WHERE doc_id = @documentId
+             AND version_id = 0
+             AND change_reason IS NULL;
+
+          SET @UpdatedRows = @@ROWCOUNT;
+      END;
+      SELECT @UpdatedRows;";
+
+    using (var connection = new SqlConnection(p2plus.p2core.Table.connectStringTable(tableName))) {
+      connection.Open();
+      // Keine explizite Transaktion: Das Synonym verweist auf einen Linked Server.
+      // BeginTransaction würde hierfür eine verteilte Transaktion (MSDTC) benötigen.
+      using (var command = new SqlCommand(sql, connection)) {
+        command.Parameters.Add("@documentId", SqlDbType.VarChar, -1).Value = documentId;
+        command.Parameters.Add("@reason", SqlDbType.NVarChar, -1).Value = reason;
+        command.ExecuteScalar();
       }
     }
-``
+  }
+</script>
+
+<%
+  /// ---------------------------------------------------------------------------------------------------------------------------
+  /// 01.04.2020 CAL #290502 V7: new targetpage for http-post to upload a single file (inspired from older DMSFileUpload.aspx)
+  /// ---------------------------------------------------------------------------------------------------------------------------
+  ///
+  /*
+   Info: Falls Fehlermeldung erscheinen, die darauf hindeuten, dass die Datenmenge des Uploads zu groß ist
+   (z.B. HTTP-Fehler "413 Request Entity Too Large")
+   dann müssen in der Einstellung des Webs zwei Einstellungen geprüft bzw. geändert werden:
+   in /web.config:
+   1.) <httpRuntime executionTimeout="30" maxRequestLength="10240" requestValidationMode="2.0" />
+     der Wert von maxRequestLength limitiert die Uploadgröße, der Wert in KB
+   2.)  <requestFiltering>
+          <requestLimits maxAllowedContentLength="10485760" maxUrl="4096" maxQueryString="2048" />
+        </requestFiltering>
+     der Wert von maxAllowedContentLength limitiert ebenfalls, dieser Wert ist in Byte
+   */
+
+  string environment = Request.Form["Environment"];     //can be empty
+  string NavTable = Request.Form["NavTable"];
+  string Id = Request.Form["id"];
+
+  string filename = Request.Form["filename"];           //filename with extension, but without complete path
+  string documentType = Request.Form["DocumentType"];   //documenttype from upload-dialog
+  string description = Request.Form["Description"];     //description from upload-dialog
+  string exceptionText = null;
+  string stackTrace = null;
+  bool uploadCompleted = false;
+  string uploadWarning = null;
+  string serverTiming = "";
+
+  if (!string.IsNullOrEmpty(NavTable))
+    NavTable = NavTable.ToLower();
+
+  if (Request.Files.Count != 1)
+    exceptionText = WebUtils.translate("Es darf nur eine Datei hochgeladen werden");
+  else if (Request.Files[0].ContentLength < 1)
+    exceptionText = WebUtils.translate("Die hochgeladene Datei existiert nicht oder hat keinen Inhalt.");
+  else if (string.IsNullOrEmpty(filename))
+    exceptionText = WebUtils.translate("Der Name der hochgeladenen Datei ist unbestimmt.");
+  else if (string.IsNullOrEmpty(NavTable))
+    exceptionText = WebUtils.translate("Keine Tabelle definiert.");
+  else if (string.IsNullOrEmpty(Id))
+    exceptionText = WebUtils.translate("Kein Datensatz definiert.");
+
+  if (exceptionText == null) {
+    if (!string.IsNullOrEmpty(environment)) {
+      HttpContext.Current.Items["P2plusEnv"] = environment;
+    }
+
+    try  {
+      byte[] datas = new byte[Request.Files[0].ContentLength];
+      Request.Files[0].InputStream.Read(datas, 0, Request.Files[0].ContentLength);
+
+      string docNrCol = DocumentTypes.getJobTableCol(NavTable);
+      string docNr = WebUtils.getScalarValue (NavTable , "SELECT " + docNrCol + " FROM " + NavTable + " WHERE id=" + Id );
+
+      Document doc = StoreBase.CreateDocumentUploadFromByteArray(
+        datas,
+        NavTable,
+        filename,
+        description,
+        docNr,
+        documentType,
+        Id);
+
+      // Zusätzliche Form-Parameter in doc.Properties übernehmen (lowercase keys)
+      string[] skipKeys = new string[] { "filename", "documenttype", "description", "navtable", "id", "environment" };
+      foreach (string key in Request.Form.AllKeys) {
+        if (string.IsNullOrEmpty(key)) continue;
+        string keyLower = key.ToLower();
+        if (Array.Exists(skipKeys, k => k == keyLower)) continue;
+
+        string[] values = Request.Form.GetValues(key);
+        if (values == null || values.Length == 0) continue;
+
+        // Mehrfachwerte zusammenfassen (z.B. mit '|' — wählen Sie Trennzeichen nach Bedarf)
+        string val = string.Join("|", values);
+
+        if (!string.IsNullOrEmpty(val)) {
+          try {
+            // StringDictionary: durch Indexer setzen (überschreibt ggf. vorhandene Werte)
+            doc.Properties[keyLower] = val;
+          } catch (Exception) {
+            // optional: Logging
+          }
+        }
+      }
+
+      // Übergebene Revision als Versionshinweis verwenden; expliziter alterationText hat Vorrang.
+      string revision = Request.Form["revision"];
+      if (!string.IsNullOrWhiteSpace(revision)
+          && string.IsNullOrWhiteSpace(doc.Properties["alterationtext"])) {
+        doc.Properties["alterationtext"] = revision;
+      }
+
+      var d3Store = doc.Store as D3Store;
+      bool checkInitialRevision = d3Store != null
+        && string.Equals(p2plus.p2core.Sysconf.getString("DMS", "D3_INTERFACE"), "REST", StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(revision);
+      // Vorherige Suche verhindert eine nachträgliche Zuordnung einer späteren
+      // Revision zu einem bereits vorhandenen Dokument mit leerer Version 0.
+      var stepTimer = System.Diagnostics.Stopwatch.StartNew();
+      string existingDocumentId = null;
+      if (checkInitialRevision) {
+        try {
+          existingDocumentId = FindRevisionDocumentId(NavTable, Id, filename);
+        } catch (Exception) {
+          // Ohne erfolgreiche Vorprüfung keine nachträgliche SQL-Änderung vornehmen.
+          checkInitialRevision = false;
+          uploadWarning = "Die SQL-Vorprüfung ist fehlgeschlagen. Der d.3-Versionshinweis wurde nicht per SQL gesetzt. Datei nicht erneut hochladen.";
+        }
+        serverTiming += "d3_lookup_before;dur=" + stepTimer.ElapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + ", ";
+      }
+
+      stepTimer.Restart();
+      doc.Save();
+      uploadCompleted = true;
+      serverTiming += "d3_save;dur=" + stepTimer.ElapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+      if (checkInitialRevision && existingDocumentId == null) {
+        stepTimer.Restart();
+        string documentId = FindRevisionDocumentId(NavTable, Id, filename);
+        serverTiming += ", d3_lookup_after;dur=" + stepTimer.ElapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (documentId == null) {
+          throw new Exception("Das hochgeladene Dokument wurde in d.3 nicht eindeutig gefunden; kein SQL-Update ausgeführt.");
+        }
+        stepTimer.Restart();
+        SetInitialRevisionReason(NavTable, documentId, doc.Properties["alterationtext"]);
+        serverTiming += ", d3_revision_update;dur=" + stepTimer.ElapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+      }
+    }//try
+    catch ( Exception e ) {
+      if (uploadCompleted) {
+        // Erfolgreichen Upload nicht wegen einer fehlgeschlagenen Nachbearbeitung als Fehler melden.
+        uploadWarning = "Der Datei-Upload war erfolgreich, aber die Nachbearbeitung des d.3-Versionshinweises ist fehlgeschlagen. Datei nicht erneut hochladen.";
+      } else {
+        //#189512
+        string txt = nlsMsg.getEntry(e.Message);
+        if (txt == null)
+          exceptionText = e.Message;
+        else
+          exceptionText = txt;
+      }
+      stackTrace = e.StackTrace;
+
+    }//catch
+
+  }//if
+
+  if (string.IsNullOrEmpty(exceptionText)) {
+    Response.ClearHeaders();
+    Response.ClearContent();
+    if (!string.IsNullOrEmpty(serverTiming)) {
+      Response.AppendHeader("Server-Timing", serverTiming);
+    }
+    if (!string.IsNullOrEmpty(uploadWarning)) {
+      // URL-Kodierung erlaubt Umlaute im Header; der Antworttext bleibt unverändert.
+      Response.AppendHeader("X-APplus-Upload-Warning", Uri.EscapeDataString(uploadWarning));
+    }
+    Response.Write("OK");
+    Response.StatusCode = 200;
+  } else {
+    throw new Exception(exceptionText);
+  }
+%>
+```
 
 ## Tests
 

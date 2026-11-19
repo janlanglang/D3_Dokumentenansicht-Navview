@@ -180,6 +180,48 @@ test('initial metadata and types are read from the hidden native query row witho
   } finally { fixture.dom.window.close(); }
 });
 
+test('version reason replaces the current version label and appears in history; null falls back to version id', async () => {
+  const fixture = setup();
+  let fallbackFixture;
+  try {
+    const row = fixture.host.querySelector('tr');
+    row.setAttribute('data-d3metadata', JSON.stringify([metadata()]));
+    row.setAttribute('data-d3types', '[]');
+    row.setAttribute('data-d3versionhistory', JSON.stringify([
+      { D3DocumentId: 'T1', VersionHistory: [
+        { version_id: '2_1', change_reason: 'Implicit transfer on import of new version', create_date: '2026-11-18T10:00:00', create_user: 'user1' },
+        { version_id: '2_0', change_reason: 'new version', create_date: '2026-11-17T10:00:00', create_user: 'user2' },
+        { version_id: '1_9', change_reason: null, create_date: '2026-11-16T10:00:00', create_user: 'user3' },
+        { version_id: '1_8', change_reason: 'Custom revision', create_date: '2026-11-15T10:00:00', create_user: 'user4' }
+      ] }
+    ]));
+    await fixture.mount();
+    const badge = fixture.host.querySelector('.d3-version-badge');
+    assert.match(badge.textContent, /Version Implicit transfer on import of new version/);
+    const items = [...fixture.host.querySelectorAll('.d3-version-item')].map((item) => item.textContent);
+    assert.match(items[0], /^\(V2_1\) \| 18\.11\.2026, 10:00 \| user1$/);
+    assert.match(items[1], /^\(V2_0\) \| 17\.11\.2026, 10:00 \| user2$/);
+    assert.match(items[2], /^\(V1_9\) \| 16\.11\.2026, 10:00 \| user3$/);
+    assert.match(items[3], /^\(V1_8\) Rev: Custom revision \| 15\.11\.2026, 10:00 \| user4$/);
+    assert.doesNotMatch(items.join(' '), /null/i);
+
+    fallbackFixture = setup();
+    const fallbackRow = fallbackFixture.host.querySelector('tr');
+    fallbackRow.setAttribute('data-d3metadata', JSON.stringify([metadata()]));
+    fallbackRow.setAttribute('data-d3types', '[]');
+    fallbackRow.setAttribute('data-d3versionhistory', JSON.stringify([
+      { D3DocumentId: 'T1', VersionHistory: [
+        { version_id: '2_1', change_reason: null, create_date: '2026-11-18T10:00:00', create_user: 'user1' }
+      ] }
+    ]));
+    await fallbackFixture.mount();
+    assert.match(fallbackFixture.host.querySelector('.d3-version-badge').textContent, /Version 2_1/);
+  } finally {
+    fixture.dom.window.close();
+    if (fallbackFixture) fallbackFixture.dom.window.close();
+  }
+});
+
 test('refresh and upload reload the native query instead of reusing the initial hidden metadata', async () => {
   let uploaded = false;
   const fixture = setup({

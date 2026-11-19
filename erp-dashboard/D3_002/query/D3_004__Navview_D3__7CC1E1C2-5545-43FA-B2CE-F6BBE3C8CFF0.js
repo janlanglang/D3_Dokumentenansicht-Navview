@@ -71,10 +71,11 @@
 		if (!Array.isArray(parsed)) return [];
 		return parsed.map((entry) => ({
 			versionId: text(entry && (entry.version_id ?? entry.versionId)),
+			changeReason: text(entry && (entry.change_reason ?? entry.changeReason)),
 			createDate: text(entry && (entry.create_date ?? entry.createDate)),
 			createUser: text(entry && (entry.create_user ?? entry.createUser)),
 			docState: text(entry && (entry.doc_state ?? entry.docState))
-		})).filter((entry) => entry.versionId || entry.createDate || entry.createUser || entry.docState)
+		})).filter((entry) => entry.versionId || entry.changeReason || entry.createDate || entry.createUser || entry.docState)
 			.sort((left, right) => {
 				const leftTime = Date.parse(left.createDate || '');
 				const rightTime = Date.parse(right.createDate || '');
@@ -130,7 +131,7 @@
 				type: text(record.Dokumenttyp) || 'Ohne Dokumentart', date: text(record.Datum),
 				extension: extension, url: url, linkError: linkError,
 				description: null, language: null, revision: null, size: null,
-				currentVersionId: '', versionHistory: [],
+				currentVersionId: '', currentVersionLabel: '', versionHistory: [],
 				metadataError: id ? 'Metadaten noch nicht geladen.' : 'D3-Dokument-ID fehlt in SOAP-Ausgabe und Dateipfad.'
 			};
 		});
@@ -156,6 +157,9 @@
 			const result = Object.assign({}, document);
 			result.versionHistory = versionById.get(document.id) || [];
 			result.currentVersionId = result.versionHistory.length ? text(result.versionHistory[0].versionId) : '';
+			result.currentVersionLabel = result.versionHistory.length
+				? result.versionHistory[0].changeReason || result.currentVersionId
+				: '';
 			if (!document.id) return result;
 			if (!repositoryId || document.repository !== repositoryId || document.linkError) {
 				result.metadataError = 'SQL-Archivzuordnung nicht bestaetigt.';
@@ -712,7 +716,7 @@
 			this.ui.count.textContent = '(' + this.documents.length + ')';
 			const search = text(this.ui.search.value).toLocaleLowerCase('de');
 			const documents = this.documents.filter((document) => [document.name, document.type, document.description, document.language,
-				document.revision, document.date, document.currentVersionId].join(' ').toLocaleLowerCase('de').includes(search));
+				document.revision, document.date, document.currentVersionId, document.currentVersionLabel].join(' ').toLocaleLowerCase('de').includes(search));
 			if (!documents.length) this.ui.list.append(element('p', 'd3-empty', search ? 'Keine Treffer.' : 'Keine Dokumente vorhanden.'));
 			const groups = new Map();
 			documents.forEach((document) => {
@@ -777,14 +781,20 @@
 							const wrap = element('span', 'd3-description-wrap');
 							wrap.append(element('span', 'd3-description-text', value === null ? 'Nicht verfuegbar' : value || '-'));
 							if (document.currentVersionId) {
-								const badge = element('span', 'd3-version-badge', 'Version ' + document.currentVersionId);
+								const badge = element('span', 'd3-version-badge', 'Version ' + (document.currentVersionLabel || document.currentVersionId));
 								badge.tabIndex = 0;
 								badge.setAttribute('role', 'note');
 								const popup = element('span', 'd3-version-popup');
 								popup.append(element('strong', '', 'Versionshistorie'));
 								const list = element('span', 'd3-version-list');
 								document.versionHistory.forEach((entry) => {
-									const rowText = 'V' + (entry.versionId || '?') + ' - ' + formatHistoryDate(entry.createDate) + ' - ' + (entry.createUser || 'Unbekannt');
+									const reason = entry.changeReason
+										&& entry.changeReason !== 'new version'
+										&& entry.changeReason !== 'Implicit transfer on import of new version'
+										? ' Rev: ' + entry.changeReason
+										: '';
+									const rowText = '(V' + (entry.versionId || '?') + ')' + reason + ' | '
+										+ formatHistoryDate(entry.createDate) + ' | ' + (entry.createUser || 'Unbekannt');
 									list.append(element('span', 'd3-version-item', rowText));
 								});
 								if (!document.versionHistory.length) list.append(element('span', 'd3-version-item', 'Keine Historie gefunden.'));
